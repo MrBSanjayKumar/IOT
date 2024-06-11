@@ -1,195 +1,166 @@
-//WIFI and ADC2 Channels are not working together hence using ADC1 channels
 
-#include <stdlib.h>
-#include <string.h>
+#include <ESP8266WiFi.h>
+#include "Adafruit_MQTT.h"
+#include "Adafruit_MQTT_Client.h"
+const char *ssid =  "Galaxy-M20";     // Enter your WiFi Name
+const char *pass =  "ac312124"; // Enter your WiFi Password
 
-#include <WiFi.h>
-#include <PubSubClient.h>
+WiFiClient client;
 
-#define ThermistorPin 35
-#define LDR_PIN       33
-#define SOIL_MOISTURE_PIN 34
+#define MQTT_SERV "io.adafruit.com"
+#define MQTT_PORT 1883
+#define MQTT_NAME "choudharyas"
+#define MQTT_PASS "988c4e045ef64c1b9bc8b5bb7ef5f2d9"
 
-#define MOTOR         12
+const int ledPin = D6;
+const int ldrPin = D1;
+const int moisturePin = A0;             // moisteure sensor pin
+const int motorPin = D0;
+unsigned long interval = 10000;
+unsigned long previousMillis = 0;
+unsigned long interval1 = 1000;
+unsigned long previousMillis1 = 0;
+float moisturePercentage;              //moisture reading
 
-#define R1  10000
-#define C1  (float)1.009249522e-03
-#define C2  (float)2.378405444e-04
-#define C3  (float)2.019202697e-07
+//Set up the feed you're publishing to
+Adafruit_MQTT_Client mqtt(&client, MQTT_SERV, MQTT_PORT, MQTT_NAME, MQTT_PASS);
+Adafruit_MQTT_Publish AgricultureData = Adafruit_MQTT_Publish(&mqtt,MQTT_NAME "/f/AgricultureData");
 
-// Update these with values suitable for your network.
-const char* ssid = "hidden";
-const char* password = "qwerty12";
-const char* mqtt_server = "m15.cloudmqtt.com";
-#define mqtt_port 16951
-#define MQTT_USER "mnkobdft"
-#define MQTT_PASSWORD "xOftMxYCCo91"
-#define MQTT_SERIAL_PUBLISH_LIGHT "stechiez/agree/light"
-#define MQTT_SERIAL_PUBLISH_TEMPERATUE "stechiez/agree/temp"
-#define MQTT_SERIAL_PUBLISH_SOIL "stechiez/agree/soil"
-#define MQTT_SERIAL_RECEIVER_MOTOR "stechiez/agree/motor"
-#define MQTT_SERIAL_RECEIVER_MOTOR_STATUS "stechiez/agree/mstatus"
+//Set up the feed you're subscribing to
+ Adafruit_MQTT_Subscribe LED = Adafruit_MQTT_Subscribe(&mqtt, MQTT_NAME "/f/LED");
+  Adafruit_MQTT_Subscribe Pump = Adafruit_MQTT_Subscribe(&mqtt, MQTT_NAME "/f/Pump");
 
-
-WiFiClient wifiClient;
-PubSubClient client(wifiClient);
-
-float avg[3]={0,0,0};
-
-char light_array[7];
-char soil_array[7];
-char temp_array[7];
-
-
-void setup_wifi() {
-    delay(10);
-    // We start by connecting to a WiFi network
-    Serial.println();
-    Serial.print("Connecting to ");
-    Serial.println(ssid);
-    WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(".");
-    }
-    randomSeed(micros());
-    Serial.println("");
-    Serial.println("WiFi connected");
-    Serial.println("IP address: ");
-    Serial.println(WiFi.localIP());
-}
-
-void reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Create a random client ID
-    String clientId = "ESP32Client-";
-    clientId += String(random(0xffff), HEX);
-    // Attempt to connect
-    if (client.connect(clientId.c_str(),MQTT_USER,MQTT_PASSWORD)) {
-      Serial.println("connected");
-      //Once connected, publish an announcement...
-      client.publish("/icircuit/presence/ESP32/", "hello world");
-      // ... and resubscribe
-      client.subscribe(MQTT_SERIAL_RECEIVER_MOTOR);
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(3000);
-    }
-  }
-}
-
-void callback(char* topic, byte *payload, unsigned int length) {
-    Serial.println("-------new message from broker-----");
-    Serial.print("channel:");
-    Serial.println(topic);
-    Serial.print("data:");  
-    Serial.write(payload, length);
-    Serial.println();
-    if(*payload == '0')
-    {
-      digitalWrite(MOTOR, 0);
-    }
-    else if(*payload == '1')
-    {
-      digitalWrite(MOTOR, 1);
-    }
-}
-
-void publishSerialData(const char *pub_str,const char *serialData){
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.publish(pub_str, serialData);
-}
-
-
-void setup() {
-Serial.begin(115200);
-pinMode(MOTOR, OUTPUT);
-
-  Serial.setTimeout(500);// Set time out for 
-  setup_wifi();
-  client.setServer(mqtt_server, mqtt_port);
-  client.setCallback(callback);
-  reconnect();
-  digitalWrite(MOTOR, 0);
-}
-
-//NTC Temparature Reading and Processing
-float getTemperature(void)
+void setup()
 {
-  static int avgArrayIndex=0;
-  int Vo;
-  float logR2,R2, T, Tc;
-  Vo = analogRead(ThermistorPin);
-  R2 = R1 * (4096.0 / (float)Vo - 1.0);
-  logR2 = log(R2);
-  T = (1.0 / (C1 + C2*logR2 + C3*logR2*logR2*logR2));
-  Tc = T - 273.15;
-  avg[avgArrayIndex++] = Tc;
-  if(avgArrayIndex > 2)
-  avgArrayIndex = 0;
-  Tc = (avg[0] + avg[1] + avg[2])/3;
-  return Tc;
-}
-
-
-float getMoisturePercentage(void)
-{
-  float moisture_percentage;
-  int sensor_analog;
-  sensor_analog = analogRead(SOIL_MOISTURE_PIN);
-  moisture_percentage = ( 100 - ( (sensor_analog/4096.00) * 100 ) );
-  moisture_percentage = (float)moisture_percentage;
-  return moisture_percentage;
-}
-
-float getLightPercentage(void)
-{
-  int ldrRawVal;
-  float percentage;
-  ldrRawVal = analogRead(LDR_PIN);    
-  percentage = ((float)((ldrRawVal*100)/4096));
-//  percentage = 100 - percentage;
-  return percentage;
-}
-
-void loop() {
-  float lightpercentage = getLightPercentage();
-  float temp = getTemperature();
-  float soilMoisturePer = getMoisturePercentage();
-  String temp_s(temp);
-  String soilPer_s(soilMoisturePer);
-  String lightPer_s(lightpercentage);
-  bool mstatus = digitalRead(MOTOR);
-  String mstatus_s(mstatus);
-
-  if(soilMoisturePer > 80.00)
-  {
-    digitalWrite(MOTOR, 0);
-  }
+  Serial.begin(115200);
+  delay(10);
+  mqtt.subscribe(&LED);
+  mqtt.subscribe(&Pump);
+  pinMode(motorPin, OUTPUT);
+  pinMode(ledPin, OUTPUT);
+  pinMode(ldrPin, INPUT);
+  digitalWrite(motorPin, LOW); // keep motor off initally
   
-  publishSerialData(MQTT_SERIAL_RECEIVER_MOTOR_STATUS,mstatus_s.c_str());  
-  delay(2500);
-  publishSerialData(MQTT_SERIAL_PUBLISH_SOIL,soilPer_s.c_str());
-  delay(250);
-  publishSerialData(MQTT_SERIAL_PUBLISH_TEMPERATUE,temp_s.c_str());
-  delay(250);
-  publishSerialData(MQTT_SERIAL_PUBLISH_LIGHT,lightPer_s.c_str());
-  delay(250);
-  client.loop();
-  Serial.print("Temperature: "); 
-  Serial.print(temp);
-  Serial.print(" C, LDR: "); 
-  Serial.print(lightpercentage,0); 
-  Serial.print("%");
-  Serial.print(" Moisture Percentage = ");
-  Serial.print(soilMoisturePer);
-  Serial.println("%");  
-//  delay(400);
+  Serial.println("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, pass);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");              // print ... till not connected
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+}
+ 
+void loop()
+
+{
+   MQTT_connect();
+  
+
+ int ldrStatus = analogRead(ldrPin);
+
+    if (ldrStatus <= 200) {
+    
+    digitalWrite(ledPin, HIGH);
+    
+    Serial.print("Its DARK, Turn on the LED : ");
+    
+    Serial.println(ldrStatus);
+    
+    } 
+    else {
+    
+    digitalWrite(ledPin, LOW);
+    
+    Serial.print("Its BRIGHT, Turn off the LED : ");
+    
+    Serial.println(ldrStatus);
+    
+    }
+
+  moisturePercentage = ( 100.00 - ( (analogRead(moisturePin) / 1023.00) * 100.00 ) );
+
+ 
+    Serial.print("Soil Moisture is  = ");
+    Serial.print(moisturePercentage);
+    Serial.println("%");
+    
+    
+
+if (moisturePercentage < 35) {
+  digitalWrite(motorPin, HIGH);         // tun on motor
+}
+if (moisturePercentage > 35 && moisturePercentage < 37) {
+  digitalWrite(motorPin, HIGH);        //turn on motor pump
+}
+if (moisturePercentage > 38) {
+  digitalWrite(motorPin, LOW);          // turn off mottor
+}
+
+
+if (! AgricultureData.publish(moisturePercentage))
+       {                     
+         delay(5000);   
+          }
+Adafruit_MQTT_Subscribe * subscription;
+while ((subscription = mqtt.readSubscription(5000)))
+     {
+    
+   if (subscription == &LED)
+     {
+      //Print the new value to the serial monitor
+      Serial.println((char*) LED.lastread);
+     
+   if (!strcmp((char*) LED.lastread, "OFF"))
+      {
+        digitalWrite(ledPin, HIGH);
+    }
+    if (!strcmp((char*) LED.lastread, "ON"))
+      {
+        digitalWrite(ledPin, LOW);
+    }
+ }
+   
+   if (subscription == &Pump)
+     {
+      //Print the new value to the serial monitor
+      Serial.println((char*) Pump.lastread);
+     
+   if (!strcmp((char*) Pump.lastread, "OFF"))
+      {
+        digitalWrite(motorPin, HIGH);
+    }
+     if (!strcmp((char*) Pump.lastread, "ON"))
+      {
+        digitalWrite(motorPin, LOW);
+    }
+
+     }
+     }
+}
+void MQTT_connect() 
+{
+  int8_t ret;
+
+  // Stop if already connected.
+  if (mqtt.connected()) 
+  {
+    return;
+  }
+
+  uint8_t retries = 3;
+  while ((ret = mqtt.connect()) != 0) // connect will return 0 for connected
+  { 
+       
+       mqtt.disconnect();
+       delay(5000);  // wait 5 seconds
+       retries--;
+       if (retries == 0) 
+       {
+         // basically die and wait for WDT to reset me
+         while (1);
+       }
+  }
 }
